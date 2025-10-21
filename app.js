@@ -33,10 +33,10 @@ async function setupSpoofing(page, userAgent) {
 
 async function exchangeEtpToken(etpRtValue) {
   const params = new URLSearchParams();
-  params.append('grant_type', 'etp_rt_cookie');
+  params.append('grant_type', 'etp_rt');
 
   const headers = {
-    'Authorization': 'Basic bm9haWhkZXZtXzZpeWcwYThsMHE6',
+    'Authorization': 'Basic Y3Jfd2ViX2FwcDo=',
     'Content-Type': 'application/x-www-form-urlencoded',
     'Accept': 'application/json, text/plain, */*',
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
