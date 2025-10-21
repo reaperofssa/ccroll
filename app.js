@@ -200,8 +200,15 @@ async function verifyLogin(email, password) {
       if (etpCookie) {
         console.log('✅ Found etp_rt cookie:', etpCookie.value.substring(0, 20) + '...');
         
+        // Get all cookies to pass along
+        const allCookies = await page.cookies();
+        const cookieString = allCookies
+          .filter(c => c.domain.includes('crunchyroll'))
+          .map(c => `${c.name}=${c.value}`)
+          .join('; ');
+        
         // Exchange etp_rt for bearer token
-        const tokenExchange = await exchangeEtpToken(etpCookie.value);
+        const tokenExchange = await exchangeEtpToken(etpCookie.value, cookieString);
         
         if (tokenExchange.success) {
           return {
