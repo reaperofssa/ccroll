@@ -36,7 +36,7 @@ async function exchangeEtpToken(etpRtValue) {
   params.append('grant_type', 'etp_rt');
 
   const headers = {
-    'Authorization': 'Basic Y3Jfd2ViX2FwcDo=',
+    'Authorization': 'Basic bm9haWhkZXZtXzZpeWcwYThsMHE6',
     'Content-Type': 'application/x-www-form-urlencoded',
     'Accept': 'application/json, text/plain, */*',
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
@@ -49,8 +49,8 @@ async function exchangeEtpToken(etpRtValue) {
       params.toString(),
       { headers }
     );
-    
-    console.log('🎟️ Token exchange successful!');
+
+    console.log('✅ Token exchange successful:', response.data);
     return {
       success: true,
       tokenData: response.data
