@@ -52,7 +52,7 @@ async function exchangeEtpToken(etpRtValue) {
 
   try {
     const response = await axios.post(
-      'https://www.crunchyroll.com/auth/v1/token',
+      'https://beta-api.crunchyroll.com/auth/v1/token',
       params.toString(),
       { headers }
     );
