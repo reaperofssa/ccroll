@@ -212,18 +212,43 @@ async function verifyLogin(email, password) {
         const tokenExchange = await exchangeEtpToken(etpCookie.value);
         
         if (tokenExchange.success) {
-          return {
-            success: true,
-            valid: true,
-            message: 'Email and password are correct',
-            email: email,
-            etpRt: etpCookie.value,
-            accessToken: tokenExchange.tokenData.access_token,
-            refreshToken: tokenExchange.tokenData.refresh_token,
-            expiresIn: tokenExchange.tokenData.expires_in,
-            tokenType: tokenExchange.tokenData.token_type
-          };
-        } else {
+  const accessToken = tokenExchange.tokenData.access_token;
+
+  // 🔹 Inline premium check
+  let premium = false;
+  try {
+    const accountRes = await axios.get('https://beta-api.crunchyroll.com/accounts/v1/me', {
+      headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' }
+    });
+
+    const externalId = accountRes.data.external_id;
+    if (externalId) {
+      const subsRes = await axios.get(
+        `https://beta-api.crunchyroll.com/subs/v1/subscriptions/${externalId}/benefits`,
+        { headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' } }
+      );
+
+      const benefits = subsRes.data.items?.map(b => b.benefit) || [];
+      premium = benefits.includes('cr_premium');
+    }
+  } catch (err) {
+    if (err.response?.status !== 404) console.warn('⚠️ Could not check premium status:', err.message);
+  }
+
+  // 🔹 Return full login info including premium
+  return {
+    success: true,
+    valid: true,
+    message: 'Email and password are correct',
+    email: email,
+    etpRt: etpCookie.value,
+    accessToken: accessToken,
+    refreshToken: tokenExchange.tokenData.refresh_token,
+    expiresIn: tokenExchange.tokenData.expires_in,
+    tokenType: tokenExchange.tokenData.token_type,
+    premium: premium
+  };
+} else {
           return {
             success: true,
             valid: true,
