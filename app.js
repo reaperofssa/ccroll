@@ -31,36 +31,49 @@ async function setupSpoofing(page, userAgent) {
   });
 }
 
-async function exchangeEtpToken(etpRtValue) {
-  const params = new URLSearchParams();
-  params.append('grant_type', 'etp_rt');
-
-  const headers = {
-    'Authorization': 'Basic bm9haWhkZXZtXzZpeWcwYThsMHE6',
-    'Content-Type': 'application/x-www-form-urlencoded',
-    'Accept': 'application/json, text/plain, */*',
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-    'Cookie': `etp_rt=${etpRtValue}`
-  };
-
+async function exchangeEtpToken(page, etpRtValue) {
   try {
-    const response = await axios.post(
-      'https://beta-api.crunchyroll.com/auth/v1/token',
-      params.toString(),
-      { headers }
-    );
+    console.log('🔄 Attempting in-page token exchange...');
 
-    console.log('✅ Token exchange successful:', response.data);
-    return {
-      success: true,
-      tokenData: response.data
-    };
+    const result = await page.evaluate(async (etpValue) => {
+      try {
+        const params = new URLSearchParams();
+        params.append('grant_type', 'etp_rt_cookie');
+
+        const res = await fetch('https://beta-api.crunchyroll.com/auth/v1/token', {
+          method: 'POST',
+          headers: {
+            'Authorization': 'Basic bm9haWhkZXZtXzZpeWcwYThsMHE6',
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Accept': 'application/json, text/plain, */*'
+          },
+          body: params.toString(),
+          credentials: 'include' // send all cookies from the same browser context
+        });
+
+        const data = await res.json();
+        return { status: res.status, data };
+      } catch (err) {
+        return { error: err.message, stack: err.stack };
+      }
+    }, etpRtValue);
+
+    if (result.error) {
+      console.error('⚠️ Exchange error inside browser:', result.error);
+      return { success: false, error: result.error };
+    }
+
+    if (result.status === 200 && result.data?.access_token) {
+      console.log('✅ Token exchange successful!');
+      return { success: true, tokenData: result.data };
+    } else {
+      console.warn('⚠️ Token exchange failed:', result.data);
+      return { success: false, error: result.data };
+    }
+
   } catch (error) {
-    console.error('⚠️ Failed to exchange token:', error.response?.data || error.message);
-    return {
-      success: false,
-      error: error.response?.data || error.message
-    };
+    console.error('❌ Token exchange exception:', error.message);
+    return { success: false, error: error.message };
   }
 }
 
@@ -208,7 +221,7 @@ async function verifyLogin(email, password) {
           .join('; ');
         
         // Exchange etp_rt for bearer token
-        const tokenExchange = await exchangeEtpToken(etpCookie.value, cookieString);
+        const tokenExchange = await exchangeEtpToken(page, etpCookie.value);
         
         if (tokenExchange.success) {
           return {
