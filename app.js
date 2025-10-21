@@ -1,6 +1,7 @@
 const express = require('express');
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+const axios = require('axios');
 
 puppeteer.use(StealthPlugin());
 
@@ -30,14 +31,44 @@ async function setupSpoofing(page, userAgent) {
   });
 }
 
-function randomDelay(min, max) {
-  return Math.floor(Math.random() * (max - min + 1) + min);
+async function exchangeEtpToken(etpRtValue) {
+  const params = new URLSearchParams();
+  params.append('grant_type', 'etp_rt');
+  params.append('etp_rt', etpRtValue);
+
+  const headers = {
+    'Authorization': 'Basic bm9haWhkZXZtXzZpeWcwYThsMHE6',
+    'Content-Type': 'application/x-www-form-urlencoded',
+    'Accept': 'application/json, text/plain, */*',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+  };
+
+  try {
+    const response = await axios.post(
+      'https://beta-api.crunchyroll.com/auth/v1/token',
+      params.toString(),
+      { headers }
+    );
+    
+    console.log('🎟️ Token exchange successful!');
+    return {
+      success: true,
+      tokenData: response.data
+    };
+  } catch (error) {
+    console.error('⚠️ Failed to exchange token:', error.response?.data || error.message);
+    return {
+      success: false,
+      error: error.response?.data || error.message
+    };
+  }
 }
 
 async function verifyLogin(email, password) {
   console.log('🔄 Launching browser...');
   
   const userAgent = getRealisticUserAgent();
+  const siteKey = '6LeQj_wUAAAAABLdMxMxFF-x3Jvyd1hkbsRV9UAk';
   
   const browser = await puppeteer.launch({
     headless: 'new',
@@ -57,328 +88,172 @@ async function verifyLogin(email, password) {
     await page.setViewport({ width: 1920, height: 1080 });
     await page.setUserAgent(userAgent);
 
-    // Listen for network requests to capture login response and token
-    let loginResponse = null;
-    let tokenData = null;
-    let tokenRequest = null;
-    
-    page.on('response', async (response) => {
-      const url = response.url();
-      
-      // Capture login response
-      if (url.includes('/api/login') || url.includes('sso.crunchyroll.com/api')) {
-        try {
-          const status = response.status();
-          const data = await response.json();
-          loginResponse = { status, data, ok: response.ok() };
-          console.log('📡 Intercepted login response:', { status, data });
-        } catch (e) {
-          console.log('⚠️ Could not parse login response:', e.message);
-        }
-      }
-      
-      // Capture token endpoint
-      if (url.includes('crunchyroll.com/auth/v1/token')) {
-        try {
-          const status = response.status();
-          const headers = {};
-          response.headers().forEach((value, key) => {
-            headers[key] = value;
-          });
-          const data = await response.json();
-          tokenData = { 
-            status, 
-            headers,
-            data, 
-            ok: response.ok() 
-          };
-          console.log('🎫 Intercepted token response:', { status });
-        } catch (e) {
-          console.log('⚠️ Could not parse token response:', e.message);
-        }
-      }
-    });
-    
-    page.on('request', (request) => {
-      const url = request.url();
-      
-      // Capture token request details
-      if (url.includes('crunchyroll.com/auth/v1/token')) {
-        tokenRequest = {
-          url: url,
-          method: request.method(),
-          headers: request.headers(),
-          postData: request.postData()
-        };
-        console.log('📤 Token request intercepted');
-      }
-    });
-
     console.log('📍 Navigating to SSO login...');
     await page.goto('https://sso.crunchyroll.com/login', {
       waitUntil: 'networkidle2',
       timeout: 60000
     });
 
-    // Wait for the login form to load - use multiple selectors as fallback
-    console.log('⏳ Waiting for login form...');
-    await Promise.race([
-      page.waitForSelector('input[name="email"]', { timeout: 10000 }),
-      page.waitForSelector('input[type="email"]', { timeout: 10000 })
-    ]);
-    console.log('✅ Login form loaded');
+    await new Promise(resolve => setTimeout(resolve, 2000));
 
-    await new Promise(resolve => setTimeout(resolve, randomDelay(1000, 2000)));
-
-    console.log('✍️ Typing email...');
-    // Try multiple selectors for email field (most reliable first)
-    const emailSelectors = [
-      'input[name="email"]',
-      'input[type="email"]',
-      'input.email-input__field--H4fRW',
-      '#email'
-    ];
+    console.log('🔐 Attempting login...');
     
-    let emailTyped = false;
-    for (const selector of emailSelectors) {
+    const loginResult = await page.evaluate(async (loginData) => {
       try {
-        const element = await page.$(selector);
-        if (element) {
-          await page.click(selector);
-          await new Promise(resolve => setTimeout(resolve, randomDelay(100, 300)));
-          await page.type(selector, email, { delay: randomDelay(50, 150) });
-          emailTyped = true;
-          console.log(`✅ Email typed using selector: ${selector}`);
-          break;
-        }
-      } catch (e) {
-        continue;
-      }
-    }
-    
-    if (!emailTyped) {
-      throw new Error('Could not find email input field');
-    }
+        // Load reCAPTCHA
+        await new Promise((resolve, reject) => {
+          if (window.grecaptcha?.ready) {
+            resolve();
+            return;
+          }
+          
+          const script = document.createElement('script');
+          script.src = `https://www.google.com/recaptcha/api.js?render=${loginData.siteKey}`;
+          
+          let resolved = false;
+          script.onload = () => {
+            const checkReady = setInterval(() => {
+              if (window.grecaptcha?.ready && !resolved) {
+                resolved = true;
+                clearInterval(checkReady);
+                setTimeout(resolve, 1000);
+              }
+            }, 100);
+            
+            setTimeout(() => {
+              if (!resolved) {
+                clearInterval(checkReady);
+                reject(new Error('reCAPTCHA timeout'));
+              }
+            }, 20000);
+          };
+          
+          script.onerror = () => reject(new Error('Failed to load reCAPTCHA'));
+          document.head.appendChild(script);
+        });
 
-    await new Promise(resolve => setTimeout(resolve, randomDelay(500, 1000)));
+        // Get reCAPTCHA token
+        const recaptchaToken = await new Promise((resolve, reject) => {
+          grecaptcha.ready(async () => {
+            try {
+              const token = await grecaptcha.execute(loginData.siteKey, { action: 'login' });
+              resolve(token);
+            } catch (error) {
+              reject(error);
+            }
+          });
+        });
 
-    console.log('🔐 Typing password...');
-    // Try multiple selectors for password field
-    const passwordSelectors = [
-      'input[name="password"]',
-      'input[type="password"]',
-      'input.password-input__field--Qgoe0',
-      '#password'
-    ];
-    
-    let passwordTyped = false;
-    for (const selector of passwordSelectors) {
-      try {
-        const element = await page.$(selector);
-        if (element) {
-          await page.click(selector);
-          await new Promise(resolve => setTimeout(resolve, randomDelay(100, 300)));
-          await page.type(selector, password, { delay: randomDelay(50, 150) });
-          passwordTyped = true;
-          console.log(`✅ Password typed using selector: ${selector}`);
-          break;
-        }
-      } catch (e) {
-        continue;
-      }
-    }
-    
-    if (!passwordTyped) {
-      throw new Error('Could not find password input field');
-    }
-
-    await new Promise(resolve => setTimeout(resolve, randomDelay(800, 1500)));
-
-    console.log('🖱️ Clicking login button...');
-    // Try multiple selectors for submit button
-    const buttonSelectors = [
-      'button[type="submit"]',
-      'button.button--is-type-one--3uIzT',
-      'button:has-text("Log In")',
-      'form button[type="submit"]',
-      'button.button--xqVd0'
-    ];
-    
-    let buttonClicked = false;
-    for (const selector of buttonSelectors) {
-      try {
-        const element = await page.$(selector);
-        if (element) {
-          await page.click(selector);
-          buttonClicked = true;
-          console.log(`✅ Login button clicked using selector: ${selector}`);
-          break;
-        }
-      } catch (e) {
-        continue;
-      }
-    }
-    
-    if (!buttonClicked) {
-      throw new Error('Could not find login button');
-    }
-
-    // Wait for either redirect or error
-    console.log('⏳ Waiting for login response...');
-    
-    // Wait for initial navigation to complete (max 15 seconds)
-    await Promise.race([
-      page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 15000 }).catch(() => null),
-      new Promise(resolve => setTimeout(resolve, 15000))
-    ]);
-
-    let currentUrl = page.url();
-    console.log('📍 Current URL after login:', currentUrl);
-
-    // Check if we're on callback page - wait for redirect to discover
-    if (currentUrl.includes('/callback')) {
-      console.log('⏳ On callback page, waiting for redirect to discover...');
-      
-      try {
-        // Wait for navigation away from callback (max 15 seconds)
-        await Promise.race([
-          page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 }),
-          page.waitForFunction(
-            () => !window.location.href.includes('/callback'),
-            { timeout: 15000 }
-          )
-        ]);
+        // Perform login
+        const response = await fetch('https://sso.crunchyroll.com/api/login', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          },
+          body: JSON.stringify({
+            email: loginData.email,
+            password: loginData.password,
+            recaptchaToken: recaptchaToken,
+            eventSettings: {}
+          }),
+          credentials: 'include'
+        });
         
-        // Give page a moment to settle
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        const data = await response.json();
         
-        currentUrl = page.url();
-        console.log('✅ Redirected from callback to:', currentUrl);
-      } catch (e) {
-        console.log('⚠️ Timeout waiting for redirect from callback:', e.message);
+        return {
+          status: response.status,
+          ok: response.ok,
+          data: data
+        };
+      } catch (error) {
+        return {
+          error: error.message,
+          stack: error.stack
+        };
       }
-    }
-
-    // If not yet on discover, wait a bit more for token request and potential redirect
-    if (!currentUrl.includes('/discover')) {
-      console.log('⏳ Not on discover yet, waiting for token request...');
-      await new Promise(resolve => setTimeout(resolve, 5000));
-    }
-
-    const finalUrl = page.url();
-    console.log('📍 Final URL:', finalUrl);
-
-    // Check if redirected to discover page (successful login)
-    if (finalUrl.includes('crunchyroll.com/discover') || 
-        (finalUrl.includes('crunchyroll.com') && !finalUrl.includes('sso.crunchyroll.com'))) {
-      console.log('✅ Login successful - on Crunchyroll');
-      
-      const result = {
-        success: true,
-        valid: true,
-        message: 'Email and password are correct',
-        email: email,
-        redirectUrl: finalUrl
+    }, { email, password, siteKey });
+    
+    console.log('📊 Login response:', JSON.stringify(loginResult));
+    
+    // Check if login was successful
+    if (loginResult.error) {
+      return {
+        success: false,
+        valid: false,
+        message: 'Login request failed',
+        error: loginResult.error
       };
-
-      // Add token data if captured
-      if (tokenData) {
-        console.log('🎫 Token data captured');
-        result.token = {
-          access_token: tokenData.data.access_token,
-          refresh_token: tokenData.data.refresh_token,
-          expires_in: tokenData.data.expires_in,
-          token_type: tokenData.data.token_type,
-          scope: tokenData.data.scope,
-          country: tokenData.data.country,
-          account_id: tokenData.data.account_id,
-          profile_id: tokenData.data.profile_id
-        };
-        
-        result.tokenMetadata = {
-          status: tokenData.status,
-          headers: tokenData.headers
-        };
-      }
-
-      // Add token request details if captured
-      if (tokenRequest) {
-        console.log('📤 Token request details captured');
-        result.tokenRequest = {
-          url: tokenRequest.url,
-          method: tokenRequest.method,
-          headers: tokenRequest.headers,
-          body: tokenRequest.postData
-        };
-      }
-
-      return result;
     }
-
-    // Check intercepted login response
-    if (loginResponse) {
-      if (loginResponse.status === 200 && loginResponse.ok) {
-        if (loginResponse.data.status === 'ok' || loginResponse.data.success) {
-          console.log('✅ Login successful via API response');
+    
+    if (loginResult.status === 200 && loginResult.ok && loginResult.data.status === 'ok') {
+      console.log('✅ Login successful - credentials are valid');
+      
+      // Wait a moment for cookies to be set
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      // Extract etp_rt cookie
+      const cookies = await page.cookies();
+      const etpCookie = cookies.find(c => c.name === 'etp_rt');
+      
+      if (etpCookie) {
+        console.log('✅ Found etp_rt cookie:', etpCookie.value.substring(0, 20) + '...');
+        
+        // Exchange etp_rt for bearer token
+        const tokenExchange = await exchangeEtpToken(etpCookie.value);
+        
+        if (tokenExchange.success) {
           return {
             success: true,
             valid: true,
             message: 'Email and password are correct',
-            email: email
+            email: email,
+            etpRt: etpCookie.value,
+            accessToken: tokenExchange.tokenData.access_token,
+            refreshToken: tokenExchange.tokenData.refresh_token,
+            expiresIn: tokenExchange.tokenData.expires_in,
+            tokenType: tokenExchange.tokenData.token_type
           };
         } else {
-          console.log('❌ Login failed - invalid credentials');
           return {
             success: true,
-            valid: false,
-            message: 'Invalid email or password',
-            email: email
+            valid: true,
+            message: 'Login successful but token exchange failed',
+            email: email,
+            etpRt: etpCookie.value,
+            tokenExchangeError: tokenExchange.error
           };
         }
-      } else if (loginResponse.status === 401 || loginResponse.status === 403) {
-        console.log('❌ Login failed - invalid credentials');
+      } else {
+        console.warn('⚠️ No etp_rt cookie found; login may not have completed fully.');
         return {
           success: true,
-          valid: false,
-          message: 'Invalid email or password',
+          valid: true,
+          message: 'Login successful but etp_rt cookie not found',
           email: email
         };
       }
-    }
-
-    // Check for error messages on the page
-    const errorElement = await page.$('.error, .error-message, [class*="error"]').catch(() => null);
-    if (errorElement) {
-      const errorText = await page.evaluate(el => el.textContent, errorElement);
-      console.log('❌ Error on page:', errorText);
+    } else if (loginResult.status === 401 || loginResult.status === 403) {
+      console.log('❌ Login failed - invalid credentials');
       return {
         success: true,
         valid: false,
         message: 'Invalid email or password',
         email: email,
-        error: errorText
+        details: loginResult.data
       };
-    }
-
-    // If still on login page, likely failed
-    if (currentUrl.includes('sso.crunchyroll.com/login')) {
-      console.log('⚠️ Still on login page - likely invalid credentials');
+    } else {
+      console.log('⚠️ Unexpected response:', loginResult.status);
       return {
         success: true,
         valid: false,
-        message: 'Invalid email or password',
-        email: email
+        message: 'Login failed',
+        email: email,
+        statusCode: loginResult.status,
+        details: loginResult.data
       };
     }
-
-    console.log('⚠️ Unclear result');
-    return {
-      success: false,
-      valid: false,
-      message: 'Unable to determine login status',
-      email: email,
-      currentUrl: currentUrl
-    };
 
   } catch (error) {
     console.error('❌ Error:', error.message);
@@ -426,21 +301,24 @@ app.get('/login', async (req, res) => {
 app.get('/', (req, res) => {
   res.json({
     status: 'online',
-    message: 'Crunchyroll Login Verification API',
-    description: 'Verifies if email/password combination is valid using browser automation',
+    message: 'Crunchyroll Login Verification API with Token Exchange',
+    description: 'Verifies email/password and returns bearer token',
     usage: 'GET /login?email=YOUR_EMAIL&password=YOUR_PASSWORD',
     response: {
       success: 'true if request completed, false if error',
       valid: 'true if credentials are correct, false if incorrect',
       message: 'Human-readable message',
-      email: 'The email that was checked'
-    },
-    method: 'Stealth browser automation with click & type'
+      email: 'The email that was checked',
+      accessToken: 'Bearer token for API access (if valid)',
+      refreshToken: 'Refresh token for renewing access',
+      expiresIn: 'Token expiration time in seconds',
+      etpRt: 'The etp_rt cookie value'
+    }
   });
 });
 
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`📍 http://localhost:${PORT}/login?email=YOUR_EMAIL&password=YOUR_PASSWORD`);
-  console.log(`✅ Stealth login verification using browser automation`);
+  console.log(`✅ Login verification with automatic token exchange`);
 });
