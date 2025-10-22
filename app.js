@@ -268,25 +268,38 @@ async function verifyLogin(email, password) {
         };
       }
     } else if (loginResult.status === 401 || loginResult.status === 403) {
-      console.log('❌ Login failed - invalid credentials');
-      return {
-        success: true,
-        valid: false,
-        message: 'Invalid email or password',
-        email: email,
-        details: loginResult.data
-      };
-    } else {
-      console.log('⚠️ Unexpected response:', loginResult.status);
-      return {
-        success: true,
-        valid: false,
-        message: 'Login failed',
-        email: email,
-        statusCode: loginResult.status,
-        details: loginResult.data
-      };
-    }
+  console.log('❌ Login failed - invalid credentials');
+  return {
+    success: true,
+    valid: false,
+    message: 'Invalid email or password',
+    email: email,
+    details: loginResult.data
+  };
+} else if (
+  loginResult.status === 429 || 
+  loginResult.data?.error === 'too_many_requests' || 
+  loginResult.data?.status === 'error'
+) {
+  console.log('⏳ Rate limited detected - too many requests');
+  return {
+    success: false,
+    valid: false,
+    rateLimited: true,
+    message: 'Rate limited by target site',
+    email: email
+  };
+} else {
+  console.log('⚠️ Unexpected response:', loginResult.status);
+  return {
+    success: true,
+    valid: false,
+    message: 'Login failed',
+    email: email,
+    statusCode: loginResult.status,
+    details: loginResult.data
+  };
+}
 
   } catch (error) {
     console.error('❌ Error:', error.message);
